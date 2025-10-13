@@ -1,0 +1,167 @@
+---
+title: "Datos temporales en R"
+author: "Sabrina Rodríguez"
+format: 
+  gfm:
+    toc: false
+editor: visual
+---
+
+![](logoOceanhackweek.png)
+
+```{r, include=FALSE}
+packages <- c("sf", "spdep", "spatialreg", "vioplot", "corrplot", "ggplot2")
+# Revisar si los paquetes están instalados
+no_i<- packages[!packages %in% installed.packages()[, "Package"]]
+# instalar paquetes faltantes
+if (length(no_i) > 1) {
+  install.packages(no_i, repos = "https://cran.rstudio.com/", dep = T)
+}
+install.packages(c("dplyr","stringr","janitor"), dependencies = TRUE)
+library(dplyr)
+library(stringr)
+library(spdep)   # datos espaciales
+library(sf)      # datos espaciales
+library(spatialreg) # modelos SAR/SEM
+library(vioplot)   # gráficos de violín
+library(corrplot)  # gráficos de correlación 
+library(ggplot2)
+```
+
+### Objetivo
+
+-   En este scrip se muestra como realizar un análisis estadístico de 2022 y 2023, con datos de abundacia, índices de diversidad para cada sitio, zona de estuario y franja del intermareal.
+
+### Directo a los datos
+
+```{r, echo=T}
+# Cargar datos
+datos <- read.csv2("2022-23IUcomofactor.csv",
+                   sep = ";", dec = ",", header = TRUE,
+                   fileEncoding = "UTF-8") 
+#
+
+
+# 2) Convierto categóricas a factor
+cols_factor <- c("Sitio","Zona.del.Estuario","Franja.Intermareal","UI")
+datos <- datos %>%
+  mutate(across(all_of(cols_factor), as.factor),
+         # 3) Año a numérico o factor (usá lo que te convenga para análisis)
+         Año = as.integer(Año))
+
+# 4) Convierto numéricas que quedaron en character con coma decimal
+cols_num_char <- c("Salinidad","Temperatura","Shannon_H","Equitatividad")
+datos <- datos %>%
+  mutate(across(all_of(cols_num_char),
+                ~ as.numeric(str_replace(.x, ",", "."))))
+
+head(datos)   # estructura de datos
+summary(datos)  # resumen estadístico
+
+```
+
+###observo mis datos
+
+```{r}
+datos$Año <- factor(datos$Año)
+
+par(mfrow = c(1,3))
+boxplot(Temperatura ~ Año, data = datos, main = "Temperatura por año",
+        xlab = "Año", ylab = "°C", col = "lightgreen")
+boxplot(Salinidad ~ Año, data = datos, main = "Salinidad por año",
+        xlab = "Año", ylab = "PSU", col = "lightgreen")
+boxplot(Abundancia ~ Año, data = datos, main = "Abundancia por año",
+        xlab = "Año", ylab = "ind/m2", col = "lightgreen")
+par(mfrow = c(1,1))
+```
+
+##gráficos de violin para Salinidad, Temperatura, Abundancia por año de muestreo (2022 y 2023)
+
+```{r}
+library(vioplot)
+
+par(mfrow = c(1,3), mar = c(4,4,2,1))
+
+# Temperatura por año
+vioplot(
+  datos$Temperatura[datos$Año == 2022],
+  datos$Temperatura[datos$Año == 2023],
+  names = c("2022","2023"),
+  col = "lightblue", main = "Temperatura", ylab = "°C"
+)
+
+# Salinidad por año
+vioplot(
+  datos$Salinidad[datos$Año == 2022],
+  datos$Salinidad[datos$Año == 2023],
+  names = c("2022","2023"),
+  col = "darkseagreen", main = "Salinidad", ylab = "PSU"
+)
+
+# Abundancia por año
+vioplot(
+  datos$Abundancia[datos$Año == 2022],
+  datos$Abundancia[datos$Año == 2023],
+  names = c("2022","2023"),
+  col = "lightpink", main = "Abundancia", ylab = "ind/m²"
+)
+
+par(mfrow = c(1,1))
+
+```
+
+##correlación de mis variables numéricas
+
+```{r correlation, echo=T}
+library(corrplot)
+datos$Año <- as.integer(as.character(datos$Año))
+
+# columnas 6:11 y convertir a numérico
+cols <- intersect(6:11, seq_along(datos))
+to_num <- function(x) {
+  if (is.character(x)) as.numeric(gsub(",", ".", x)) else as.numeric(x)
+}
+df_num_all <- as.data.frame(lapply(datos[, cols, drop = FALSE], to_num))
+var_names <- names(df_num_all)
+
+
+```
+
+```{r}
+
+anos <- sort(unique(datos$Año))
+
+for (yr in anos) {
+  # Filtrar filas de ese año
+  idx <- which(datos$Año == yr)
+  df_y <- df_num_all[idx, , drop = FALSE]
+
+  # Matriz de correlaciones (manejo de NA)
+  cor_mat <- cor(df_y, use = "pairwise.complete.obs", method = "pearson")
+
+  # Título de sección
+  cat("## Año", yr, "\n\n")
+  print(round(cor_mat, 3))
+
+  # Dos gráficos lado a lado
+  op <- par(mfrow = c(1, 2), mar = c(4,4,2,1))
+
+  # Dispersogramas
+  pairs(df_y,
+        main = paste("Dispersión –", yr),
+        pch = 19, col = adjustcolor("tan", 0.6),
+        labels = var_names)
+
+  # Corrplot
+  corrplot(cor_mat, method = "circle", type = "upper",
+           col = colorRampPalette(c("orangered", "white", "mediumseagreen"))(200),
+           tl.col = "darkslateblue", tl.srt = 90,
+           addCoef.col = "midnightblue", tl.cex = 0.6,
+           number.cex = 0.6,
+           mar = c(0,0,2,0), title = paste("Matriz de correlaciones –", yr))
+
+  par(op) # restaurar parámetros
+  cat("\n\n")
+}
+
+```
